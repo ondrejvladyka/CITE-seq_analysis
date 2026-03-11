@@ -40,14 +40,12 @@ system('git add .')
 
 
 
-
-
-
+system('git pull')
 
 system('git rm -r --cached .')
 
 
-
+system('git push origin master --force')
 
 
 
