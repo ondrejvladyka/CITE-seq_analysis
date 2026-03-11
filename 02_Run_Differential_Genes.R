@@ -28,51 +28,84 @@ message(">>> Saved full ranked list to: ", DEG_CSV_FILE)
 
 
 # ---------------------------------------------------------
-# 2. Volcano Plot Configuration with Labels
+# 2. Volcano Plot Configuration with Universal Colors
 # ---------------------------------------------------------
+num_clusters <- length(levels(sobj$seurat_clusters))
+CLUSTER_COLORS <- wes_palette(WES_PALETTE_NAME, num_clusters, type = "continuous")
+names(CLUSTER_COLORS) <- levels(sobj$seurat_clusters)
+
 markers_sorted$Significance <- "Not Significant"
-markers_sorted$Significance[markers_sorted$avg_log2FC > 0.25 & markers_sorted$p_val_adj < 0.05] <- paste0("Up in C", CLUSTER_A)
-markers_sorted$Significance[markers_sorted$avg_log2FC < -0.25 & markers_sorted$p_val_adj < 0.05] <- paste0("Up in C", CLUSTER_B)
 
-# --- NEW LABELING LOGIC ---
-# Grab the top 15 genes pushing Right (Cluster A) and Left (Cluster B)
-top_A <- markers_sorted %>% 
-  filter(Significance == paste0("Up in C", CLUSTER_A)) %>% 
-  slice_max(order_by = avg_log2FC, n = 25)
+# USE NAME_A and NAME_B for the text labels
+markers_sorted$Significance[markers_sorted$avg_log2FC > 0.25 & markers_sorted$p_val_adj < 0.05] <- paste0("Up in C", NAME_A)
+markers_sorted$Significance[markers_sorted$avg_log2FC < -0.25 & markers_sorted$p_val_adj < 0.05] <- paste0("Up in C", NAME_B)
 
-top_B <- markers_sorted %>% 
-  filter(Significance == paste0("Up in C", CLUSTER_B)) %>% 
-  slice_min(order_by = avg_log2FC, n = 25)
+top_A <- markers_sorted %>% filter(Significance == paste0("Up in C", NAME_A)) %>% slice_max(order_by = avg_log2FC, n = 25)
+top_B <- markers_sorted %>% filter(Significance == paste0("Up in C", NAME_B)) %>% slice_min(order_by = avg_log2FC, n = 25)
 
-# Create an empty label column, then fill it ONLY for the top genes
 markers_sorted$Label <- ""
-genes_to_label <- c(top_A$gene, top_B$gene)
+genes_to_label <- unique(c(top_A$gene, top_B$gene, EXTRA_GENES_TO_LABEL))
 markers_sorted$Label[markers_sorted$gene %in% genes_to_label] <- markers_sorted$gene[markers_sorted$gene %in% genes_to_label]
 
-# Set colors dynamically
-color_mapping <- setNames(c("grey80", "blue", "red"), 
-                          c("Not Significant", paste0("Up in C", CLUSTER_A), paste0("Up in C", CLUSTER_B)))
+# USE CLUSTER_A[1] so it always successfully picks exactly one color, even if it's a vector!
+color_mapping <- setNames(
+  c("grey80", CLUSTER_COLORS[as.character(CLUSTER_A[1])], CLUSTER_COLORS[as.character(CLUSTER_B[1])]), 
+  c("Not Significant", paste0("Up in C", NAME_A), paste0("Up in C", NAME_B))
+)
 
-# Build the labeled plot
+# ---------------------------------------------------------
+# 2. Volcano Plot Configuration (Optimized & Bug-Free)
+# ---------------------------------------------------------
+
+# --- BUG FIX 1: Prevent the "Infinity" Decapitation ---
+# Find the smallest p-value that isn't exactly zero
+min_valid_p <- min(markers_sorted$p_val_adj[markers_sorted$p_val_adj > 0], na.rm = TRUE)
+# Replace exact 0s with a number slightly smaller than the minimum so they sit at the very top of the peak
+markers_sorted$p_val_adj[markers_sorted$p_val_adj == 0] <- min_valid_p * 1e-10
+
+markers_sorted$Significance <- "Not Significant"
+markers_sorted$Significance[markers_sorted$avg_log2FC > 0.25 & markers_sorted$p_val_adj < 0.05] <- paste0("Up in C", NAME_A)
+markers_sorted$Significance[markers_sorted$avg_log2FC < -0.25 & markers_sorted$p_val_adj < 0.05] <- paste0("Up in C", NAME_B)
+
+# Grab the top 12 genes so it's not a cluttered spiderweb
+top_A <- markers_sorted %>% filter(Significance == paste0("Up in C", NAME_A)) %>% slice_max(order_by = avg_log2FC, n = 12)
+top_B <- markers_sorted %>% filter(Significance == paste0("Up in C", NAME_B)) %>% slice_min(order_by = avg_log2FC, n = 12)
+
+# --- BUG FIX 2: Use NA instead of "" so ggrepel ignores non-labeled dots ---
+markers_sorted$Label <- NA 
+genes_to_label <- unique(c(top_A$gene, top_B$gene, EXTRA_GENES_TO_LABEL))
+markers_sorted$Label[markers_sorted$gene %in% genes_to_label] <- markers_sorted$gene[markers_sorted$gene %in% genes_to_label]
+
+# Set colors (Using your Muted Red/Blue Heatmap Colors!)
+color_mapping <- setNames(
+  c("grey85", HEATMAP_HIGH, HEATMAP_LOW), 
+  c("Not Significant", paste0("Up in C", NAME_A), paste0("Up in C", NAME_B))
+)
+
 p_volcano <- ggplot(markers_sorted, aes(x = avg_log2FC, y = -log10(p_val_adj), color = Significance)) +
-  geom_point(alpha = 0.8, size = 1.5) +
+  geom_point(alpha = 0.7, size = 1.2) + 
   scale_color_manual(values = color_mapping) +
-  geom_vline(xintercept = c(-0.25, 0.25), linetype = "dashed", color = "black") +
+  geom_vline(xintercept = c(-0.25, 0.25), linetype = "dashed", color = "black", linewidth = 0.3) +
   
-  # --- ADD THE LABELS ---
   geom_text_repel(aes(label = Label),
-                  size = 4,                   # Font size
-                  fontface = "bold",          # Make text bold
-                  color = "black",            # Keep text black regardless of dot color
-                  box.padding = 0.5,          # Space around text
-                  max.overlaps = Inf,         # Force it to draw every label
-                  show.legend = FALSE) +      # Don't put "a" in the legend
+                  size = VOLCANO_LABEL_SIZE,  
+                  fontface = "bold",          
+                  color = "black",            
+                  box.padding = 0.8,          
+                  point.padding = 0.3,        
+                  min.segment.length = 0,     
+                  max.overlaps = 20,          
+                  na.rm = TRUE,               # Tells ggplot to ignore the NA labels entirely
+                  show.legend = FALSE) +      
   
   theme_minimal() +
   labs(title = paste(COMPARISON_PREFIX, "Transcriptomic Shift"),
-       x = "Average Log2 Fold Change", y = "-Log10 Adjusted P-value") 
+       x = "Average Log2 Fold Change", y = "-Log10 Adjusted P-value") +
+  theme(legend.position = "bottom",           
+        legend.title = element_blank())
 
-# Save slightly wider so the labels don't get chopped off on the edges
 volcano_file <- paste0(OUTPUT_DIR, COMPARISON_PREFIX, "_Volcano.png")
-ggsave(volcano_file, plot = p_volcano, width = 10, height = 8, dpi = 300)
+
+
+ggsave(volcano_file, plot = p_volcano, width = 10, height = 8, dpi = PUB_DPI)
 message(">>> Saved Labeled Volcano Plot to: ", volcano_file)

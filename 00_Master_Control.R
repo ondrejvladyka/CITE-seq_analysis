@@ -4,37 +4,73 @@
 # ==============================================================================
 
 # 1. DEFINE YOUR TARGETS HERE
-TARGET_CELL_TYPE <- "CD8"           # Options: "CD8", "CD4", "Thymus"
-CLUSTER_A <- 0                      # First cluster (e.g., PRE/POST dominant)
-CLUSTER_B <- 1                      # Second cluster (e.g., 22q11 dominant)
+TARGET_CELL_TYPE <- "CD8"           
+CLUSTER_A <- c(0, 1)                # Can be a single number (0) or a vector (c(0, 1))
+CLUSTER_B <- c(3, 4)                
 
-# 2. AUTOMATED DIRECTORY & SETUP (Do not touch)
-# Generate timestamp (Format: YYYYMMDD_HHMMSS)
+# --- NEW: Collapse vectors into text for clean file naming ---
+NAME_A <- paste(CLUSTER_A, collapse = "_")
+NAME_B <- paste(CLUSTER_B, collapse = "_")
+
+
+# ==============================================================================
+# 2. SCRIPT-SPECIFIC VARIABLES & PUBLICATION SETTINGS
+# ==============================================================================
+library(wesanderson)
+
+# --- Define Global Colors ---
+WES_PALETTE_NAME <- "Darjeeling1" 
+
+# Extract the base 5 colors and drop the alpha to 70% (0.7) to make them muted/pastel
+BASE_PAL <- adjustcolor(wes_palette(WES_PALETTE_NAME, 5), alpha.f = 0.7)
+
+# 1. Clinical Group Colors (Teal for PRE, Gold for POST, Red for 22q11)
+GROUP_COLORS <- c("PRE" = BASE_PAL[5], 
+                  "POST" = BASE_PAL[4], 
+                  "22q11" = BASE_PAL[1])
+
+# 2. Heatmap Gradient (First color -> White -> Last color)
+# Usually, Blue (5th color) is low expression, and Red (1st color) is high expression
+HEATMAP_LOW  <- BASE_PAL[5]  
+HEATMAP_MID  <- BASE_PAL[2]
+HEATMAP_HIGH <- BASE_PAL[1]  
+
+# --- Universal Image Settings ---
+PUB_DPI <- 600           
+VOLCANO_LABEL_SIZE <- 3  
+
+# --- Script 01b (Deep Landscape) Variables ---
+CANONICAL_GENES <- c("CCR7", "SELL", "TCF7", "LEF1", "IL7R", "CD27", "CD28", 
+                     "GZMB", "PRF1", "NKG7", "GNLY", "CXCR4", "S100A4", "ANXA1", 
+                     "PDCD1", "HAVCR2", "TIGIT", "TOX", "LAG3", "ENTPD1", "KLRG1", 
+                     "B3GAT1", "MKI67", "TOP2A")
+
+# --- Script 02 (DGE & Volcano) Variables ---
+EXTRA_GENES_TO_LABEL <- c("CXCR4", "TOX", "HAVCR2", "S100A4")
+
+
+# ==============================================================================
+# 3. AUTOMATED DIRECTORY & SETUP (Do not touch)
+# ==============================================================================
 TIMESTAMP <- format(Sys.time(), "%Y%m%d_%H%M%S")
-
-# Create the specific output folder name
 OUTPUT_DIR <- paste0("results_", TARGET_CELL_TYPE, "_", TIMESTAMP, "/")
+if (!dir.exists(OUTPUT_DIR)) { dir.create(OUTPUT_DIR, recursive = TRUE) }
 
-# Tell your computer to actually create the folder if it doesn't exist
-if (!dir.exists(OUTPUT_DIR)) {
-  dir.create(OUTPUT_DIR, recursive = TRUE)
-}
-
-# Define file paths
 INPUT_OBJECT_PATH <- paste0("data/", TARGET_CELL_TYPE, "_TargetCohorts_Analyzed.qs2")
-COMPARISON_PREFIX <- paste0(TARGET_CELL_TYPE, "_C", CLUSTER_A, "_vs_C", CLUSTER_B)
+
+# Uses the new collapsed names!
+COMPARISON_PREFIX <- paste0(TARGET_CELL_TYPE, "_C", NAME_A, "_vs_C", NAME_B)
 DEG_CSV_FILE      <- paste0(OUTPUT_DIR, COMPARISON_PREFIX, "_FullSpectrum.csv")
 
 message("\n==================================================")
-message(">>> PIPELINE READY")
-message(">>> TARGET OBJECT: ", TARGET_CELL_TYPE)
-message(">>> COMPARISON: Cluster ", CLUSTER_A, " vs Cluster ", CLUSTER_B)
-message(">>> ALL OUTPUTS GOING TO: ", OUTPUT_DIR)
+message(">>> PIPELINE READY: ", COMPARISON_PREFIX)
 message("==================================================\n")
 
-# 3. RUN THE PIPELINE 
+# 4. RUN THE PIPELINE 
 source("01_Landscape_Analysis.R")
 source("01b_Deep_Landscape.R")
 source("02_Run_Differential_Genes.R")
-# source("03_GSEA_GOBP.R")
+source("03_Run_GSEA.R")
+
+
 

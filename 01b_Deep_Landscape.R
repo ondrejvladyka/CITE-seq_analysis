@@ -18,7 +18,7 @@ rev_comp_data <- as.data.frame(table(Cluster = sobj$seurat_clusters, Group = sob
 p_rev_comp <- ggplot(rev_comp_data, aes(x = Cluster, y = Proportion, fill = Group)) +
   geom_bar(stat = "identity", position = "fill", color = "black", linewidth = 0.2) +
   scale_y_continuous(labels = scales::percent) +
-  scale_fill_manual(values = c("PRE" = "#66c2a5", "POST" = "#fc8d62", "22q11" = "#8da0cb")) +
+  scale_fill_manual(values = GROUP_COLORS) +
   labs(title = paste(TARGET_CELL_TYPE, "- Clinical Group Makeup per Cluster"), 
        subtitle = "Which cohorts dominate which biological states?",
        x = "Seurat Cluster", y = "Percentage of Cluster") +
@@ -28,41 +28,28 @@ ggsave(paste0(OUTPUT_DIR, TARGET_CELL_TYPE, "_Reverse_Composition.png"), plot = 
 
 
 # --- ANGLE 2: Canonical Marker DotPlot ---
-# Grouped by biological function for a clean visual narrative
-canonical_genes <- c(
-  # Naive / Memory / Survival
-  "CCR7", "SELL", "TCF7", "LEF1", "IL7R", "CD27", "CD28", 
-  
-  # Effector / Cytotoxicity
-  "GZMB", "PRF1", "NKG7", "GNLY", 
-  
-  # Migration / Virtual Memory / Stress
-  "CXCR4", "S100A4", "ANXA1", 
-  
-  # Exhaustion / Dysfunction / Senescence
-  "PDCD1",   # PD-1
-  "HAVCR2",  # TIM-3
-  "TIGIT",   # TIGIT
-  "TOX",     # TOX
-  "LAG3",    # LAG-3
-  "ENTPD1",  # CD39
-  "KLRG1",   # Senescence
-  "B3GAT1",  # CD57 proxy
-  
-  # Proliferation
-  "MKI67", "TOP2A"
-)
+# (Assumes CANONICAL_GENES is already loaded from Master Script)
 
 # Only plot genes that actually exist in the current object
-genes_to_plot <- intersect(canonical_genes, rownames(sobj))
+genes_to_plot <- intersect(CANONICAL_GENES, rownames(sobj))
 
 p_dot <- DotPlot(sobj, features = genes_to_plot, group.by = "seurat_clusters") + 
   RotatedAxis() + 
-  scale_color_distiller(palette = "RdYlBu") +
+  
+  # --- NEW DARJEELING GRADIENT ---
+  # midpoint = 0 ensures that baseline/average expression is perfectly white!
+  scale_color_gradient2(low = HEATMAP_LOW, 
+                        mid = HEATMAP_MID, 
+                        high = HEATMAP_HIGH, 
+                        midpoint = 0) +
+  
   ggtitle(paste(TARGET_CELL_TYPE, "- Canonical State Markers")) +
-  theme(axis.text.x = element_text(size = 10, face = "bold")) # Makes the gene names pop
+  theme(axis.text.x = element_text(size = 10, face = "bold")) 
 
-ggsave(paste0(OUTPUT_DIR, TARGET_CELL_TYPE, "_Canonical_DotPlot.png"), plot = p_dot, width = 12, height = 6, dpi = 300)
+# Save using the Master Script DPI settings
+ggsave(paste0(OUTPUT_DIR, TARGET_CELL_TYPE, "_Canonical_DotPlot.png"), 
+       plot = p_dot, width = 12, height = 6, dpi = PUB_DPI)
+
 
 # --- ANGLE 3: Clonal Homeostasis (Stacked Barplot) ---
 if("cloneSize" %in% colnames(sobj@meta.data)) {
