@@ -1,6 +1,6 @@
 # ==============================================================================
 # SCRIPT: 03_Run_GSEA.R
-# PURPOSE: Gene Set Enrichment Analysis (GO:BP) and Network Visualization
+# PURPOSE: Gene Set Enrichment Analysis (GO:BP) and Split Network Visualization
 # ==============================================================================
 library(dplyr)
 library(ggplot2)
@@ -51,39 +51,97 @@ if (nrow(as.data.frame(gsea_res)) == 0) {
   gsea_res <- pairwise_termsim(gsea_res)
   
   # ---------------------------------------------------------
-  # VISUALIZATION 1: Network Plot (Enrichment Map)
+  # VISUALIZATION 1: Network Plot (Enrichment Map) - Condensed
   # ---------------------------------------------------------
   p_network <- emapplot(gsea_res, 
                         showCategory = 40,  
                         color = "NES",      
-                        layout = "nicely",
+                        layout = "fr",      
                         node_label = "category") +
     ggtitle(paste(COMPARISON_PREFIX, "- GO:BP Pathway Network"),
-            subtitle = paste0("Positive NES = Up in C", NAME_A, " | Negative NES = Up in C", NAME_B))
+            subtitle = paste0("Positive NES = Up in C", NAME_A, " | Negative NES = Up in C", NAME_B)) +
+    theme(plot.title = element_text(face = "bold", size = 16))
   
+  # --- FIX 3: Shrink the canvas footprint to naturally eliminate white space ---
   network_file <- paste0(OUTPUT_DIR, COMPARISON_PREFIX, "_GSEA_Network.png")
-  ggsave(network_file, plot = p_network, width = 24, height = 20, dpi = PUB_DPI) # Uses Master DPI
+  ggsave(network_file, plot = p_network, width = 16, height = 14, dpi = PUB_DPI)
   
   # ---------------------------------------------------------
-  # VISUALIZATION 2: Classic Faceted Dot Plot
+  # VISUALIZATION 2: Split Dot Plots (One for each group)
   # ---------------------------------------------------------
-  # Map the "activated" (positive NES) and "suppressed" (negative NES) labels dynamically
-  custom_labels <- c("activated" = paste0("Up in C", NAME_A), 
-                     "suppressed" = paste0("Up in C", NAME_B))
+  # Create two separate GSEA result objects by filtering the NES direction
+  gsea_res_A <- gsea_res
+  gsea_res_A@result <- gsea_res@result %>% filter(NES > 0)
   
-  p_dot_wide <- dotplot(gsea_res, 
-                        showCategory = 25, 
-                        split = ".sign", 
-                        label_format = 80, # Wide text so long GO terms fit on one line
-                        font.size = 8) + 
-    facet_grid(.~.sign, labeller = as_labeller(custom_labels)) +
-    ggtitle(paste(COMPARISON_PREFIX, "- Top GO:BP Pathways")) +
-    theme(strip.text = element_text(size = 10, face = "bold", color = "black"),
-          strip.background = element_rect(fill = "grey90", color = "black"),
-          axis.text.y = element_text(size = 8))
+  gsea_res_B <- gsea_res
+  gsea_res_B@result <- gsea_res@result %>% filter(NES < 0)
   
-  dotplot_file <- paste0(OUTPUT_DIR, COMPARISON_PREFIX, "_GSEA_DotPlot.png")
-  ggsave(dotplot_file, plot = p_dot_wide, width = 12, height = 10, dpi = PUB_DPI) # Uses Master DPI
+  # --- Plot for Group A (Positive NES) ---
+  if(nrow(gsea_res_A@result) > 0) {
+    p_dot_A <- dotplot(gsea_res_A, showCategory = 20, label_format = 80, font.size = 10) + 
+      ggtitle(paste("Pathways Enriched in C", NAME_A), subtitle = paste("Compared to C", NAME_B)) +
+      theme(axis.text.y = element_text(size = 9),
+            plot.title = element_text(face = "bold"))
+    
+    file_A <- paste0(OUTPUT_DIR, COMPARISON_PREFIX, "_GSEA_DotPlot_C", NAME_A, ".png")
+    ggsave(file_A, plot = p_dot_A, width = 10, height = 8, dpi = PUB_DPI)
+  } else {
+    message(">>> No positive NES pathways found for C", NAME_A)
+  }
+  
+  # --- Plot for Group B (Negative NES) ---
+  if(nrow(gsea_res_B@result) > 0) {
+    p_dot_B <- dotplot(gsea_res_B, showCategory = 20, label_format = 80, font.size = 10) + 
+      ggtitle(paste("Pathways Enriched in C", NAME_B), subtitle = paste("Compared to C", NAME_A)) +
+      theme(axis.text.y = element_text(size = 9),
+            plot.title = element_text(face = "bold"))
+    
+    file_B <- paste0(OUTPUT_DIR, COMPARISON_PREFIX, "_GSEA_DotPlot_C", NAME_B, ".png")
+    ggsave(file_B, plot = p_dot_B, width = 10, height = 8, dpi = PUB_DPI)
+  } else {
+    message(">>> No negative NES pathways found for C", NAME_B)
+  }
+  
+  # 6. Save raw GSEA results to CSV for your supplementary tables
+  csv_file <- paste0(OUTPUT_DIR, COMPARISON_PREFIX, "_GSEA_Results.csv")
+  write.csv(as.data.frame(gsea_res), csv_file, row.names = FALSE)
+  # ---------------------------------------------------------
+  # VISUALIZATION 3: Classic Broad Institute GSEA Plots
+  # ---------------------------------------------------------
+  message(">>> Generating Classic Broad-Style GSEA Plots for Top 5 Pathways...")
+  
+  # Helper function to plot and save the top N pathways
+  plot_top_gsea <- function(full_gsea, subset_res, group_name, top_n = 5) {
+    
+    # Sort the subset to get the absolute strongest drivers (by absolute NES)
+    top_pathways <- subset_res@result %>% 
+      arrange(desc(abs(NES))) %>% 
+      head(top_n)
+    
+    if(nrow(top_pathways) == 0) return(NULL)
+    
+    for(i in 1:nrow(top_pathways)) {
+      pathway_id <- top_pathways$ID[i]
+      pathway_name <- top_pathways$Description[i]
+      
+      # Clean the pathway name so it doesn't break the file system
+      clean_name <- gsub("[^A-Za-z0-9]", "_", pathway_name)
+      clean_name <- substr(clean_name, 1, 50) # Cap length
+      
+      # Generate the classic Broad-style plot
+      p_classic <- gseaplot2(full_gsea, 
+                             geneSetID = pathway_id, 
+                             title = pathway_name, 
+                             pvalue_table = TRUE) # Adds the exact p-value/NES table inside the plot!
+      
+      file_name <- paste0(OUTPUT_DIR, COMPARISON_PREFIX, "_ClassicGSEA_C", group_name, "_", clean_name, ".png")
+      ggsave(file_name, plot = p_classic, width = 12, height = 6, dpi = PUB_DPI)
+    }
+  }
+  
+  # Run the function for both sides
+  plot_top_gsea(gsea_res, gsea_res_A, NAME_A, top_n = 5)
+  plot_top_gsea(gsea_res, gsea_res_B, NAME_B, top_n = 5)
   
   # 6. Save raw GSEA results to CSV for your supplementary tables
   csv_file <- paste0(OUTPUT_DIR, COMPARISON_PREFIX, "_GSEA_Results.csv")
@@ -91,3 +149,5 @@ if (nrow(as.data.frame(gsea_res)) == 0) {
   
   message(">>> GSEA outputs saved successfully to ", OUTPUT_DIR)
 }
+
+

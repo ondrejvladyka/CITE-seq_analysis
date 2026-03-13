@@ -35,9 +35,6 @@ genes_to_plot <- intersect(CANONICAL_GENES, rownames(sobj))
 
 p_dot <- DotPlot(sobj, features = genes_to_plot, group.by = "seurat_clusters") + 
   RotatedAxis() + 
-  
-  # --- NEW DARJEELING GRADIENT ---
-  # midpoint = 0 ensures that baseline/average expression is perfectly white!
   scale_color_gradient2(low = HEATMAP_LOW, 
                         mid = HEATMAP_MID, 
                         high = HEATMAP_HIGH, 
@@ -74,7 +71,7 @@ if("cloneSize" %in% colnames(sobj@meta.data)) {
 
 # --- ANGLE 4: Key Feature UMAPs ---
 # Let's map Naive (SELL), Cytotoxic (GNLY), and Stress/Migration (CXCR4)
-features_umap <- intersect(c("SELL", "GNLY", "CXCR4"), rownames(sobj))
+features_umap <- intersect((KEY_FEATURES), rownames(sobj))
 if(length(features_umap) > 0) {
   p_feat <- FeaturePlot(sobj, features = features_umap, ncol = 3, pt.size = 0.5) & 
     scale_color_viridis_c(option = "magma", direction = -1)
@@ -83,3 +80,46 @@ if(length(features_umap) > 0) {
 }
 
 message(">>> Deep Landscape plots saved successfully to ", OUTPUT_DIR)
+
+# --- ANGLE 5: Cluster Phylogenetic Tree (Phenotypic Similarity) ---
+
+# Calculate hierarchical clustering based on average expression in PCA space
+reduc_for_tree <- ifelse("glmpca" %in% names(sobj@reductions), "glmpca", "pca")
+
+message(">>> Generating Cluster Dendrogram using ", reduc_for_tree, "...")
+sobj <- BuildClusterTree(sobj, dims = 1:20, reduction = reduc_for_tree)
+
+# Save the tree plot
+png(paste0(OUTPUT_DIR, TARGET_CELL_TYPE, "_Cluster_Dendrogram.png"), width = 1200, height = 800, res = PUB_DPI/2)
+PlotClusterTree(sobj, edge.width = 2, font.size = 14)
+title(main = paste(TARGET_CELL_TYPE, "- Cluster Phenotypic Similarity Tree"))
+dev.off()
+
+# --- ANGLE 6: Clinical Density Topography ---
+message(">>> Generating Clinical Density Contour Maps...")
+
+# --- BULLETPROOF UMAP EXTRACTION ---
+# 1. Pull the raw matrix directly from the dimensional reduction slot
+umap_raw <- Embeddings(sobj, reduction = "umap")
+umap_coords <- as.data.frame(umap_raw)
+
+# 2. Force the columns to be named exactly UMAP_1 and UMAP_2 so ggplot never fails
+colnames(umap_coords)[1:2] <- c("UMAP_1", "UMAP_2")
+
+# 3. Attach the clinical metadata
+umap_coords$Clinical_Group <- sobj$Clinical_Group
+
+p_density <- ggplot(umap_coords, aes(x = UMAP_1, y = UMAP_2)) +
+  # Draw topographic density lines
+  stat_density_2d(aes(fill = after_stat(level)), geom = "polygon", color = "white", linewidth = 0.1, bins = 12) +
+  facet_wrap(~Clinical_Group) +
+  scale_fill_viridis_c(option = "magma", name = "Cell Density") +
+  theme_minimal() +
+  labs(title = paste(TARGET_CELL_TYPE, "- Topographical Density of Cohorts"),
+       subtitle = "Visualizing the 'center of gravity' for each clinical group") +
+  theme(panel.background = element_rect(fill = "grey10"), 
+        panel.grid = element_blank(),
+        strip.text = element_text(size = 14, face = "bold"),
+        axis.text = element_blank()) 
+
+ggsave(paste0(OUTPUT_DIR, TARGET_CELL_TYPE, "_Clinical_Density_Topography.png"), plot = p_density, width = 12, height = 4, dpi = PUB_DPI)

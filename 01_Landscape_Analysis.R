@@ -7,8 +7,7 @@ library(ggplot2)
 library(patchwork)
 library(dplyr)
 
-message(">>> Loading Object: ", INPUT_OBJECT_PATH)
-sobj <- qs_read(INPUT_OBJECT_PATH)
+if(!exists("sobj")) { sobj <- qs_read(INPUT_OBJECT_PATH) }
 
 if("Clinical_Group" %in% colnames(sobj@meta.data)) {
   sobj$Clinical_Group <- factor(sobj$Clinical_Group, levels = c("PRE", "POST", "22q11"))
