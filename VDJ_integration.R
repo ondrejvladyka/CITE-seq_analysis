@@ -143,3 +143,18 @@ p_sanity <- DimPlot(sobj, group.by = "Has_TCR", reduction = "umap") +
 ggsave("VDJ_SanityCheck_UMAP.png", plot = p_sanity, width = 8, height = 6, dpi = 300)
 print(p_sanity)
 
+
+
+
+
+
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "BrisudaPRE"]  <- "C1_PRE"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "BrisudaPOST"] <- "C1_POST"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "BrisudaMEM"] <- "C1mem_POST"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "LetakPRE"]    <- "C2_PRE"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "LetakPOST"]   <- "C2_POST"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "LetakMEM"]   <- "C2mem_POST"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "SatnikPRE"]   <- "C3_PRE"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "SatnikPOST"]  <- "C3_POST"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "SatnikMEM"]  <- "C3mem_POST"
+

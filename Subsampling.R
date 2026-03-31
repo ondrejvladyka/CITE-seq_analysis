@@ -1,189 +1,193 @@
 # ==============================================================================
-# SCRIPT: Pre-Processing and Global Landscape Mapping
+# SCRIPT: Subpopulation_Generation.R
+# PURPOSE: Load base data, integrate VDJ, anonymize, subset, and run PCA
 # ==============================================================================
 
-# 1. Clear the environment and free up RAM
+# 1. Clear environment and load libraries
 rm(list = ls())
 gc()
 
-# 2. Load necessary libraries
+setwd("C:/Users/ondre/OneDrive - Univerzita Karlova/BigData/CITE-seq_analysis")
+
 library(Seurat)
 library(qs2)
-library(ggplot2)
-library(patchwork)
 library(dplyr)
-library(SeuratWrappers) # <--- Required for RunGLMPCA
+library(scRepertoire) # <-- Required for VDJ
 
 # ==============================================================================
-# MASTER CONTROL TWEAK
+# 1. LOAD BASE DATA
 # ==============================================================================
-TARGET_CELL <- "CD4"  
+message(">>> Loading the global raw object...")
+sobj <- qs_read("data/Klocperk_analysed.qs2") 
 
-# Set to TRUE to use the advanced GLM-PCA, or FALSE for classical PCA
-USE_GLMPCA <- TRUE    
+# ==============================================================================
+# 2. VDJ INTEGRATION (The Nuclear Cleanup Version)
+# ==============================================================================
+message(">>> Loading VDJ annotation files...")
+vdj_lib1 <- read.csv("data/filtered_contig_annotations_lib1.csv")
+vdj_lib2 <- read.csv("data/filtered_contig_annotations_lib2.csv")
+vdj_lib3 <- read.csv("data/filtered_contig_annotations_lib3.csv")
+vdj_lib4 <- read.csv("data/filtered_contig_annotations_lib4.csv")
 
-INPUT_ARCHIVE <- paste0(TARGET_CELL, "_Archive_with_Spike.qs2")
+# scRepertoire v2 strictly requires a named list
+vdj_list <- list("lib1" = vdj_lib1, "lib2" = vdj_lib2, "lib3" = vdj_lib3, "lib4" = vdj_lib4)
 
-# Dynamically set the output name so they don't overwrite each other
-if(USE_GLMPCA){
-  PROCESSED_FILE <- paste0("data/", TARGET_CELL, "_TargetCohorts_GLMPCA.qs2")
-} else {
-  PROCESSED_FILE <- paste0("data/", TARGET_CELL, "_TargetCohorts_Analyzed.qs2")
+message(">>> Scrubbing formatting bugs from CellRanger output...")
+for (name in names(vdj_list)) {
+  # A. Delete the confusing sample column entirely
+  vdj_list[[name]]$sample <- NULL 
+  
+  # B. Bulletproof boolean coercion (Looks for 't' or 'T', ignoring text casing)
+  vdj_list[[name]]$productive      <- grepl("[Tt]", as.character(vdj_list[[name]]$productive))
+  vdj_list[[name]]$high_confidence <- grepl("[Tt]", as.character(vdj_list[[name]]$high_confidence))
+  vdj_list[[name]]$is_cell         <- grepl("[Tt]", as.character(vdj_list[[name]]$is_cell))
+  
+  # C. Strip trailing white spaces from chains just in case
+  vdj_list[[name]]$chain <- trimws(as.character(vdj_list[[name]]$chain))
 }
 
+message(">>> Combining TCR data...")
+combined_tcr <- combineTCR(vdj_list, samples = c("lib1", "lib2", "lib3", "lib4"))
+
+# Fix barcodes (Strip the -1 suffix so it perfectly matches Seurat)
+for (i in 1:length(combined_tcr)) {
+  if(nrow(combined_tcr[[i]]) > 0) {
+    combined_tcr[[i]]$barcode <- sub("-1$", "", combined_tcr[[i]]$barcode)
+  }
+}
+
+message(">>> Integrating VDJ into Seurat Object...")
+sobj <- combineExpression(combined_tcr, 
+                          sobj, 
+                          cloneCall = "gene", 
+                          proportion = TRUE)
+
+message(">>> Cells with matched TCR data globally: ", sum(!is.na(sobj$CTgene)))
+
+# Clean up raw VDJ files from RAM to save memory
+rm(vdj_lib1, vdj_lib2, vdj_lib3, vdj_lib4, vdj_list, combined_tcr)
+gc()
+
 # ==============================================================================
-# PART 1: Data Loading & Reprocessing
+# 3. PATIENT ANONYMIZATION (HIPAA / Publication Prep)
 # ==============================================================================
-message(">>> Loading ", TARGET_CELL, " Archive...")
-sobj_raw <- qs_read(INPUT_ARCHIVE)
+message("\n>>> Anonymizing Patient IDs...")
 
-# Assign Clinical Groups
-sobj_raw$Clinical_Group <- "Exclude"
-sobj_raw$Clinical_Group[sobj_raw$Final_Combined_ID %in% c("BrisudaPRE", "LetakPRE", "SatnikPRE")] <- "PRE"
-sobj_raw$Clinical_Group[sobj_raw$Final_Combined_ID %in% c("BrisudaPOST", "LetakPOST", "SatnikPOST")] <- "POST"
-sobj_raw$Clinical_Group[sobj_raw$Final_Combined_ID %in% c("Jelinek", "Prazak", "Stringer")] <- "22q11"
+sobj$Anonymous_ID <- as.character(sobj$Final_Combined_ID)
 
-# SUBSET FIRST
-message(">>> Subsetting to Target Cohorts...")
-sobj_target <- subset(sobj_raw, subset = Clinical_Group %in% c("PRE", "POST", "22q11"))
+# Dictionary for PRE/POST Controls
+# ==============================================================================
+# 3. PATIENT ANONYMIZATION (HIPAA / Publication Prep)
+# ==============================================================================
+message("\n>>> Anonymizing Patient IDs (Including MEM cells)...")
 
-# Streamlined Analysis Function
-reprocess_target_subset <- function(obj, name_prefix) {
+sobj$Anonymous_ID <- as.character(sobj$Final_Combined_ID)
+
+# Dictionary for PRE/POST Controls (Merging MEM seamlessly into POST)
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "BrisudaPRE"]  <- "C1_PRE"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "BrisudaPOST"] <- "C1_POST"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "BrisudaMEM"]  <- "C1_POST" 
+
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "LetakPRE"]    <- "C2_PRE"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "LetakPOST"]   <- "C2_POST"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "LetakMEM"]    <- "C2_POST" 
+
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "SatnikPRE"]   <- "C3_PRE"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "SatnikPOST"]  <- "C3_POST"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "SatnikMEM"]   <- "C3_POST" 
+
+# Dictionary for 22q11 Patients
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "Jelinek"]  <- "DG_1"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "Prazak"]   <- "DG_2"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "Stringer"] <- "DG_3"
+
+# Overwrite the original column so all downstream plots use the anonymous names
+sobj$Final_Combined_ID <- factor(sobj$Anonymous_ID)
+
+# Re-assign Clinical Groups
+sobj$Clinical_Group <- "Exclude"
+sobj$Clinical_Group[grepl("PRE", sobj$Final_Combined_ID)] <- "PRE"
+sobj$Clinical_Group[grepl("POST", sobj$Final_Combined_ID)] <- "POST"
+sobj$Clinical_Group[grepl("DG_", sobj$Final_Combined_ID)] <- "22q11"
+
+# Dictionary for 22q11 Patients
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "Jelinek"]  <- "DG_1"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "Prazak"]   <- "DG_2"
+sobj$Anonymous_ID[sobj$Final_Combined_ID == "Stringer"] <- "DG_3"
+
+# Overwrite the original column so all downstream plots use the anonymous names
+sobj$Final_Combined_ID <- factor(sobj$Anonymous_ID)
+
+# Re-assign Clinical Groups
+sobj$Clinical_Group <- "Exclude"
+sobj$Clinical_Group[grepl("PRE", sobj$Final_Combined_ID)] <- "PRE"
+sobj$Clinical_Group[grepl("POST", sobj$Final_Combined_ID)] <- "POST"
+sobj$Clinical_Group[grepl("DG_", sobj$Final_Combined_ID)] <- "22q11"
+
+# ==============================================================================
+# 4. DEFINE TARGET SUBSETS & REMOVE SPIKE
+# ==============================================================================
+cd8_labels <- c("CD8_CM", "CD8_EM", "CD8_Naive", "CD8_TEMRA")
+cd4_labels <- c("CD4_CM", "CD4_EM", "CD4_Naive", "Treg")
+thymus_ids <- c("libT1", "libT2", "libT3")
+
+# Filter out Spike instantly
+message(">>> Removing Spike cells...")
+sobj_clean <- subset(sobj, subset = Final_Combined_ID != "Spike")
+
+# A. THYMUS
+message("\n>>> Subsetting Thymus cells...")
+sobj_thymus <- subset(sobj_clean, subset = Final_Combined_ID %in% thymus_ids)
+message("Thymus cells: ", ncol(sobj_thymus))
+
+# B. CD8 (Blood only)
+message("\n>>> Subsetting CD8 cells...")
+sobj_cd8 <- subset(sobj_clean, subset = starCAT_label %in% cd8_labels & !(Final_Combined_ID %in% thymus_ids))
+message("CD8 cells: ", ncol(sobj_cd8))
+
+# C. CD4 (Blood only)
+message("\n>>> Subsetting CD4 cells...")
+sobj_cd4 <- subset(sobj_clean, subset = starCAT_label %in% cd4_labels & !(Final_Combined_ID %in% thymus_ids))
+message("CD4 cells: ", ncol(sobj_cd4))
+
+# Free up memory by deleting the massive starting object
+rm(sobj, sobj_clean)
+gc()
+
+# ==============================================================================
+# 5. STANDARD REPROCESSING FUNCTION (Classical PCA)
+# ==============================================================================
+reprocess_clean_subset <- function(obj, name_prefix) {
+  message(paste0("\n>>> Re-processing ", name_prefix, " (Classical PCA Mode)..."))
   
   DefaultAssay(obj) <- "RNA"
   
-  # 1. Normalize and find features based ONLY on these 3 groups
   obj <- NormalizeData(obj, verbose = FALSE)
   obj <- FindVariableFeatures(obj, selection.method = "dispersion", nfeatures = 2000, verbose = FALSE)
   
-  # Clear out old dimensional reductions to avoid ghost warnings
-  obj[["pca"]] <- NULL
-  obj[["umap"]] <- NULL
-  
-  if(USE_GLMPCA) {
-    # ---------------------------------------------------------
-    # ROUTE A: GLM-PCA
-    # ---------------------------------------------------------
-    message(paste0("\n>>> Re-processing ", name_prefix, " (GLM-PCA Mode)..."))
-    message(">>> Calculating GLM-PCA (Note: This is computationally heavy)...")
-    
-    obj <- RunGLMPCA(obj, 
-                     features = VariableFeatures(obj), 
-                     L = 20, 
-                     minibatch = "memoized")
-    
-    message(">>> Running UMAP and Clustering on GLM-PCA space...")
-    obj <- RunUMAP(obj, reduction = "glmpca", dims = 1:20, verbose = FALSE)
-    obj <- FindNeighbors(obj, reduction = "glmpca", dims = 1:20, verbose = FALSE)
-    
+  if ("percent.mt" %in% colnames(obj@meta.data)) {
+    obj <- ScaleData(obj, vars.to.regress = "percent.mt", verbose = FALSE)
   } else {
-    # ---------------------------------------------------------
-    # ROUTE B: CLASSICAL PCA
-    # ---------------------------------------------------------
-    message(paste0("\n>>> Re-processing ", name_prefix, " (Classical PCA Mode)..."))
-    
     obj <- ScaleData(obj, verbose = FALSE)
-    obj <- RunPCA(obj, npcs = 20, verbose = FALSE)
-    
-    message(">>> Running UMAP and Clustering on PCA space...")
-    obj <- RunUMAP(obj, dims = 1:20, verbose = FALSE)
-    obj <- FindNeighbors(obj, dims = 1:20, verbose = FALSE)
   }
   
-  # Cluster using whichever graph was just generated
+  obj <- RunPCA(obj, npcs = 25, verbose = FALSE)
+  obj <- RunUMAP(obj, dims = 1:25, verbose = FALSE)
+  obj <- FindNeighbors(obj, dims = 1:20, verbose = FALSE)
   obj <- FindClusters(obj, resolution = 0.5, verbose = FALSE)
   
-  # Save using the dynamic filename
-  qs_save(obj, PROCESSED_FILE)
-  message(">>> Successfully saved: ", PROCESSED_FILE)
+  file_name <- paste0("data/", name_prefix, "_TargetCohorts_Analyzed.qs2")
+  qs_save(obj, file_name)
+  message(">>> Successfully saved: ", file_name)
   
   return(obj)
 }
 
-# Execute
-sobj_final <- reprocess_target_subset(sobj_target, TARGET_CELL)
-
 # ==============================================================================
-# PART 2: Visualizing the Landscape
+# 6. EXECUTE REPROCESSING
 # ==============================================================================
-# Clear raw objects to save RAM before plotting
-rm(sobj_raw, sobj_target, sobj_final)
-gc()
+sobj_cd8_analyzed <- reprocess_clean_subset(sobj_cd8, "CD8")
+sobj_cd4_analyzed <- reprocess_clean_subset(sobj_cd4, "CD4")
+sobj_thymus_analyzed <- reprocess_clean_subset(sobj_thymus, "Thymus")
 
-# Load the fresh, hyper-clean object
-sobj <- qs_read(PROCESSED_FILE)
-
-# Set the factor levels for consistent plotting order
-sobj$Clinical_Group <- factor(sobj$Clinical_Group, levels = c("PRE", "POST", "22q11"))
-
-# ---------------------------------------------------------
-# FIGURE 1: The Landscape (Clusters & original Atlas Labels)
-# ---------------------------------------------------------
-p1 <- DimPlot(sobj, group.by = "seurat_clusters", label = TRUE) + 
-  ggtitle(paste(TARGET_CELL, "- New Granular Clusters")) + NoLegend()
-
-p2 <- DimPlot(sobj, group.by = "starCAT_label") + 
-  ggtitle(paste(TARGET_CELL, "- Original starCAT Labels"))
-
-# ---------------------------------------------------------
-# FIGURE 2: Clinical Group Distribution (Split UMAP)
-# ---------------------------------------------------------
-p3 <- DimPlot(sobj, group.by = "seurat_clusters", split.by = "Clinical_Group", ncol = 3) +
-  ggtitle(paste(TARGET_CELL, "Density Shifts: PRE vs POST vs 22q11")) +
-  theme(legend.position = "bottom")
-
-# ---------------------------------------------------------
-# FIGURE 3: VDJ Clonal Expansion Overlay
-# ---------------------------------------------------------
-if("clonalFrequency" %in% colnames(sobj@meta.data)) {
-  p4 <- FeaturePlot(sobj, 
-                    features = "clonalFrequency", 
-                    split.by = "Clinical_Group", 
-                    order = TRUE,          # Expanded cells are drawn on top
-                    keep.scale = "all",    # Ensures 22q11 and POST use the same color logic
-                    pt.size = 0.8) & 
-    scale_color_viridis_c(option = "plasma", 
-                          na.value = "grey90", 
-                          direction = -1,
-                          name = "Clone Size") &
-    theme(legend.position = "right")
-  
-  print(p4)
-  ggsave(paste0(TARGET_CELL, "_VDJ_Expansion_Numeric.png"), plot = p4, width = 15, height = 5, dpi = 300)
-} else {
-  message(">>> WARNING: 'clonalFrequency' not found. Skipping VDJ overlay plot.")
-  p4 <- NULL
-}
-
-# ---------------------------------------------------------
-# FIGURE 4: Composition Barplot
-# ---------------------------------------------------------
-comp_data <- as.data.frame(table(Cluster = sobj$seurat_clusters, Group = sobj$Clinical_Group))
-
-# Calculate proportions
-comp_data <- comp_data %>%
-  group_by(Group) %>%
-  mutate(Proportion = Freq / sum(Freq)) %>%
-  ungroup()
-
-p_comp <- ggplot(comp_data, aes(x = Group, y = Proportion, fill = Cluster)) +
-  geom_bar(stat = "identity", position = "fill", color = "white", linewidth = 0.2) +
-  scale_y_continuous(labels = scales::percent) +
-  scale_fill_brewer(palette = "Set3") + # Clean, distinct colors
-  labs(title = paste(TARGET_CELL, "Cluster Distribution"), 
-       subtitle = "Comparing PRE, POST, and 22q11 Cohorts",
-       x = "Clinical Group", 
-       y = "Percentage of Cells") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(size = 12, face = "bold"))
-
-print(p_comp)
-
-# ---------------------------------------------------------
-# SAVE ALL FIGURES
-# ---------------------------------------------------------
-final_overview <- (p1 | p2) / p3
-ggsave(paste0(TARGET_CELL, "_Final_Overview.png"), plot = final_overview, width = 14, height = 10, dpi = 300)
-ggsave(paste0(TARGET_CELL, "_Final_Composition_Barplot.png"), plot = p_comp, width = 7, height = 7, dpi = 300)
-
-message(">>> Script Complete!")
+message("\n>>> All subpopulations successfully generated, integrated with VDJ, anonymized, and analyzed!")

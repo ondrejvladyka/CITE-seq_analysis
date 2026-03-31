@@ -10,7 +10,7 @@ library(dplyr)
 if(!exists("sobj")) { sobj <- qs_read(INPUT_OBJECT_PATH) }
 
 if("Clinical_Group" %in% colnames(sobj@meta.data)) {
-  sobj$Clinical_Group <- factor(sobj$Clinical_Group, levels = c("PRE", "POST", "22q11"))
+  sobj$Clinical_Group <- factor(sobj$Clinical_Group, levels = c("PRE", "POST", "MEM", "22q11"))
 }
 
 # --- Create the Universal Cluster Color Dictionary ---

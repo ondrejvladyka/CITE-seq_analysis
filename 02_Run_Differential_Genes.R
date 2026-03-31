@@ -30,15 +30,6 @@ if ("Rest" %in% CLUSTER_B) {
 # Apply the NEW Super Groups
 Idents(sobj_sub) <- "DGE_Group"
 
-# Count the cells
-n_A <- sum(Idents(sobj_sub) == "Target_A")
-n_B <- sum(Idents(sobj_sub) == "Target_B")
-
-# Calculate a perfectly balanced cap based on the smaller group (Max 500)
-balanced_cap <- min(n_A, n_B, 2000)
-
-message(">>> Group A Cells: ", n_A, " | Group B Cells (Background): ", n_B)
-message(">>> Balancing statistical power! Downsampling to exactly ", balanced_cap, " cells per group.")
 
 # --- THE FIX: Use the NEW names in FindMarkers! ---
 markers_full <- FindMarkers(sobj_sub, 
@@ -47,8 +38,7 @@ markers_full <- FindMarkers(sobj_sub,
                             test.use = "t",
                             only.pos = FALSE, 
                             min.pct = 0.1, 
-                            logfc.threshold = 0.1,  # Cut out the 0.0 logFC noise!
-                            max.cells.per.ident = balanced_cap)
+                            logfc.threshold = 0.1)
 
 markers_full$gene <- rownames(markers_full)
 markers_sorted <- markers_full %>% arrange(desc(avg_log2FC))
@@ -93,7 +83,7 @@ p_volcano <- ggplot(markers_sorted, aes(x = avg_log2FC, y = -log10(p_val_adj), c
   
   # --- NEW: THE Y-AXIS SQUEEZE ---
   # This physically squishes the massive values at the top, giving the bottom room to breathe!
-  scale_y_sqrt(breaks = c(0, 10, 25, 75, 200)) + 
+  scale_y_sqrt(breaks = c(0, 10, 25, 75, 150)) + 
   
   geom_text_repel(aes(label = Label),
                   size = VOLCANO_LABEL_SIZE,  
